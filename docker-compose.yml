@@ -1,0 +1,139 @@
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: cnab_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: cnab_generator
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_USER: cnab_user
+      MYSQL_PASSWORD: cnab_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql/init:/docker-entrypoint-initdb.d
+    networks:
+      - cnab_network
+    command: --default-authentication-plugin=mysql_native_password
+
+  # Redis for queues
+  redis:
+    image: redis:7-alpine
+    container_name: cnab_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - cnab_network
+
+  # Nginx
+  nginx:
+    image: nginx:alpine
+    container_name: cnab_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./backend:/var/www
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      - backend
+    networks:
+      - cnab_network
+
+  # Laravel Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cnab_backend
+    restart: unless-stopped
+    volumes:
+      - ./backend:/var/www
+      - ./backend/storage:/var/www/storage
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: cnab_generator
+      DB_USERNAME: cnab_user
+      DB_PASSWORD: cnab_password
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      JWT_SECRET: cnab_jwt_secret_key_2024
+      APP_KEY: base64:cnab_app_key_base64_2024
+      APP_DEBUG: true
+      APP_ENV: local
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - cnab_network
+    ports:
+      - "8000:8000"
+
+  # Vue.js Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cnab_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      VITE_API_URL: http://localhost/api
+    depends_on:
+      - backend
+    networks:
+      - cnab_network
+
+  # Laravel Queue Worker
+  queue:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cnab_queue
+    restart: unless-stopped
+    command: php artisan queue:work redis --sleep=3 --tries=3 --max-time=3600
+    volumes:
+      - ./backend:/var/www
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: mysql
+      DB_PORT: 3306
+      DB_DATABASE: cnab_generator
+      DB_USERNAME: cnab_user
+      DB_PASSWORD: cnab_password
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_CONNECTION: redis
+      JWT_SECRET: cnab_jwt_secret_key_2024
+      APP_KEY: base64:cnab_app_key_base64_2024
+      APP_DEBUG: true
+      APP_ENV: local
+    depends_on:
+      - mysql
+      - redis
+      - backend
+    networks:
+      - cnab_network
+
+volumes:
+  mysql_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  cnab_network:
+    driver: bridge 
